@@ -28,16 +28,16 @@ Click or view the diagram below for an illustrated flow of execution:
 4. Once message published to kafka, Score Service (SS) will be polling the messages to process the score. 
   4.1. Score is updated in Postgres DB.
   4.2. Score is updated in Redis Cache, which acts as the source for Leader Board.
-5. Frontend client (webapp) will constantly be polling/fetching the Leader Board result from SS and showing them to the users.
+5. Frontend client (webapp) will constantly be polling/fetching the Leader Board result from SS and showing them to the users (via GET /leaderboard).
 
 ## Components & Responsibilities 🔧
 
 - **Load Balancer**: Balance request routing. Use Weighted round robin. We don't use Sticky LB here as we want to keep the server stateless without session ids. Load balancer can also act as the gateway from front-end to back-end with secured connection wrapped in a VPN, which should block external access.
-- **Validator Service**: Authentication and authorization, etiher by in-house validation logic or external third-party ie. ForgeRock.
+- **Validator Service**: Authentication and authorization, etiher by in-house validation logic or external third-party ie. ForgeRock. Hosted on a managed instance group.
 - **Kafka**: Kafka is to handle high throughput. The number of users increases over time which results in thousands or millions of actions per second. Kafka can help maintain an async progress, where the Validator can publish the message to Kafka and finish the API process. In addition, Kafka brings ordering, idempotency, and deduplication for the messages, ensuring the messages are processed in order and avoiding duplicated user actions.
-- **Score Service**: Calculate scores base on actions and update to database and cache. 
-- **Postgres DB**: Persistent storage for raw scores & snapshots (e.g., PostgreSQL). It can also act as backup when Score Service instances are down, or source for analysis. 
-- **Redis Cache**: Fast reads for leaderboard queries with Redis sorted sets. Redis can also be shared among instances of Score Service.
+- **Score Service**: Calculate scores base on actions and update to database and cache. Hosted on a managed instance group.
+- **Postgres DB**: Persistent storage for raw scores & snapshots (e.g., PostgreSQL). It can also act as backup when Score Service instances are down, or source for analysis. (Cloud Spanner for GCP).
+- **Redis Cache**: Fast reads for leaderboard queries with Redis sorted sets. Redis can also be shared among instances of Score Service. (Redis Cluster).
 
 ## API Spec (for backend team) 🧾
 
@@ -47,11 +47,11 @@ Click or view the diagram below for an illustrated flow of execution:
 - `GET /leaderboard`
   - Response: `200 OK` with ordered list of `{ user_id, score, ... }`
 
-## Data Model (suggested)
+## Data Model
 
-- `Users(user_id, name, metadata)`
-- `Scores(id, user_id, score, timestamp)`
-- `Leaderboards(period, user_id, score, rank)`
+- `Users(user_id, user_name, metadata)`
+- `Scores(user_id, highest_score, rank, timestamp, ...)`
+- [Cache] `Leaderboards(user_id -> score, timestamp )`
 
 ## Non-functional Requirements ⚙️
 
@@ -65,5 +65,9 @@ Click or view the diagram below for an illustrated flow of execution:
 - Add automated tests around aggregation logic and ranking correctness.
 - Implement retries and dead-letter queue for failed events.
 - Add metrics: submission rate, processing lag, cache hit ratio, top-k stability.
+- Consider Kubernetes for long-term scalability.
 - Instead of having Score Service persisting user action and score into database right away when consume the message from Kafka, we can have scheduled task or cronjob to sync data from cache to database every now and then.
 - Sharding is a blessing in disguise. For cache performance, records can be sharded base on suitable criteria for even faster data access e.g. shard on user ids, or score ranges. However, if there is no score limit, we can shard by user ids, and have a mechanism to publish the top (10) users from every shard and unify them as global top 10 users, in separate (global) cache.
+- Analysis on db records or kafka messages.
+- Improve observability continuously.
+- Machine learning on users' scoring behavior.
